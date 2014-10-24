@@ -2,10 +2,12 @@ package org.cobbzilla.s3s3mirror;
 
 import com.amazonaws.services.s3.AmazonS3Client;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
+
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -85,20 +87,28 @@ public abstract class KeyMaster implements Runnable {
 
             while (true) {
                 for (S3ObjectSummary summary : summaries) {
-                    while (workQueue.size() >= maxQueueCapacity) {
-                        try {
-                            synchronized (notifyLock) {
-                                notifyLock.wait(50);
-                            }
-                            Thread.sleep(50);
-
-                        } catch (InterruptedException e) {
-                            log.error("interrupted!");
-                            return;
-                        }
-                    }
-                    executorService.submit(getTask(summary));
-                    counter++;
+                	while (true) {
+                		while (workQueue.size() >= maxQueueCapacity) {
+                			try {
+                				synchronized (notifyLock) {
+                					notifyLock.wait(50);
+                				}
+                				Thread.sleep(50);
+                				
+                			} catch (InterruptedException e) {
+                				log.error("interrupted!");
+                				return;
+                			}
+                		}
+                		KeyJob task = getTask(summary);
+                		try {
+							executorService.submit(task);
+                			counter++;
+                			break;
+                		} catch (RejectedExecutionException e) {
+                			log.error("Error submitting job: "+task+", possible queue overflow");
+                		}
+                	}
                 }
 
                 summaries = lister.getNextBatch();
